@@ -258,6 +258,110 @@ sub ce_tasks_http_request_http_tiny {
   return $r_data;
 }
 
+sub ce_tasks_http_request_lw2 {
+  my $prms = shift;
+
+  foreach my $p (qw( __api_url __key )) {
+    if(!exists($prms->{$p})) {
+      ce_log(\*STDERR, "ce_tasks_http_request(): error - missing parameter $p");
+      return ce_ret_local_error({}, "missing parameter $p");
+    }
+  }
+
+  my $req = LW2::http_new_request();
+  my $rsp = LW2::http_new_response();
+
+  LW2::uri_split($prms->{'__api_url'}, $req);
+
+  if($ENV{'http_proxy'}) {
+    my($p_host, $p_port);
+    ($p_host = $ENV{'http_proxy'}) =~ s/^http:\/\///;
+    ($p_port = $p_host) =~ s/^.+://;
+    $p_host =~ s/:\d+\/?$//;
+    $p_port =~ s|/$||;
+
+    $req->{whisker}->{proxy_host} = $p_host;
+    $req->{whisker}->{proxy_port} = $p_port;
+  }
+
+  if($req->{whisker}->{ssl} > 0) {
+    $req->{whisker}->{ssl_save_info} = 1;
+    $req->{whisker}->{ssl_resume}    = 1;
+  }
+
+  my $method = defined($prms->{'__method'}) ? lc($prms->{'__method'}) : 'get';
+
+  my $data   = '';
+  my @params = ();
+
+  foreach my $p (keys %$prms) {
+    next if(!ref($p) && $p =~ /^__/);
+
+    if(ref($prms->{$p}) && ref($prms->{$p}) eq 'ARRAY') {
+      my @values = ();
+      for(my $i=0; $i <= $#{ $prms->{$p} }; $i++) {
+        push(@params, "$p=" . uri_escape($prms->{$p}->[$i]));
+      }
+    } else {
+      push(@params, $p . '=' . uri_escape($prms->{$p}));
+    }
+  }
+
+  if($#params >= 0) {
+    $data = join($cgi_param_separator, @params);
+  }
+
+  if($method eq 'get') {
+    $req->{whisker}->{uri} .= '?'. $data;
+    $req->{&CE_HEADER_SIGNATURE_STR} = cloudenabled_sign_data($req->{whisker}->{uri}, $prms->{'__key'});
+  } elsif($method eq 'post' || $method eq 'put') {
+    $req->{'whisker'}->{'method'} = uc($method);
+    $req->{whisker}->{data} = $data;
+    $req->{&CE_HEADER_SIGNATURE_STR} = cloudenabled_sign_data($data, $prms->{'__key'});
+  } else {
+    ce_log(\*STDERR, "http_request(): invalid request method");
+    return ce_ret_local_error({}, 'http_request(): invalid request method');
+  }
+
+  LW2::http_fixup_request($req);
+
+  $debug and ce_log(\*STDERR, "Sending request " . Dumper($req));
+
+  my $st = LW2::http_do_request($req, $rsp);
+  $debug and ce_log(\*STDERR, "http_request(): received response " .  Dumper($rsp));
+
+  if($st) {
+    ce_log(\*STDERR, "http_request(): error - $rsp->{whisker}->{error}");
+    return ce_ret_local_error({}, $rsp->{whisker}->{error});
+  } elsif($rsp->{whisker}->{code} != 200) {
+    return ce_ret_local_error({}, "http_request(): server returned http code $rsp->{whisker}->{code}");
+  }
+
+
+  if(!exists($rsp->{&CE_HEADER_SIGNATURE_STR}) && 
+    !exists($rsp->{&CE_HEADER_STATUS_STR})) {
+    return ce_ret_local_error({}, "server didn't provide a valid signature");
+  } elsif(!exists($rsp->{&CE_HEADER_SIGNATURE_STR}) && exists($rsp->{&CE_HEADER_STATUS_STR})) {
+    return ce_ret_local_error({}, "http_request(): returned status: " .  
+                                      ce_map_op_st_str($rsp->{&CE_HEADER_STATUS_STR}));
+  } elsif(!exists($rsp->{whisker}->{data}) || length($rsp->{whisker}->{data}) == 0) {
+    return ce_ret_local_error({}, "Error: server returned an empty response");
+  } else {
+    my $sig = cloudenabled_sign_data($rsp->{whisker}->{data}, $prms->{'__key'});
+    if($rsp->{&CE_HEADER_SIGNATURE_STR} ne $sig) {
+      ce_log(\*STDERR, "http_request(): Error: server signature doesn't match.  Expected signature: $sig");
+      $debug and ce_log(\*STDERR, sprintf("http_request(): sig = %s, data = %s",
+                      $rsp->{&CE_HEADER_SIGNATURE_STR}, $rsp->{whisker}->{data}));
+      return ce_ret_local_error({}, "server signature doesn't match");
+    }
+  }
+
+  my $r_data = ce_querystring_2_hashref($rsp->{whisker}->{data});
+
+  return $r_data;
+}
+
+
 sub ce_querystring_2_hashref {
   my($query_string, $overwrite) = (@_);
 
