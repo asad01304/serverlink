@@ -207,9 +207,7 @@ sub ce_tasks_http_request_http_tiny {
                     timeout => 30,
   );
 
-  warn Dumper($req_obj);
   my $rsp = $http_obj->request($method, $url, $req_obj);
-  warn Dumper($rsp);
 
   $debug and ce_log(\*STDERR, "http_request(): received response " .  Dumper($rsp));
 
@@ -233,8 +231,6 @@ sub ce_tasks_http_request_http_tiny {
   my $sig_recvd = defined($rsp_headers_r->{$sig_hdr}) && 
                   length($rsp_headers_r->{$sig_hdr})   ? 
                   $rsp_headers_r->{$sig_hdr} : '';
-
-  warn "status_hdr = $status_hdr, sig_hdr = $sig_hdr\n";
 
   my $content_recvd = defined($rsp->{content}) && length($rsp->{content}) ?
                       $rsp->{content} : '';
